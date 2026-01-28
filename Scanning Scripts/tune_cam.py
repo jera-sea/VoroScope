@@ -7,17 +7,17 @@ import cv2 # Requirement: pip install opencv-python
 
 # --- DEFAULTS ---
 current_params = {
-    "exposure": 20000,   # us
-    "gain": 1.0,         # multiplier
-    "red": 2.1,          # gain
-    "blue": 1.6          # gain
+    "exposure": 50000,   # us
+    "gain": 2.3540,         # multiplier
+    "red": 2.1316,          # gain
+    "blue": 3.3847          # gain
 }
 
 # --- CAMERA SETUP ---
 print("Initializing Camera...")
 cam = Picamera2()
 # We use a smaller resolution for the preview stream to keep it fast
-config = cam.create_video_configuration(main={"size": (1024, 768), "format": "RGB888"})
+config = cam.create_video_configuration(main={"size": (4056, 3040), "format": "RGB888"})
 cam.configure(config)
 cam.start()
 

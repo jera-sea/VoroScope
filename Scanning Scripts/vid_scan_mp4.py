@@ -13,15 +13,15 @@ from picamera2.encoders import H264Encoder
 MOONRAKER_URL = "http://127.0.0.1:7125"
 
 # XY Zig-Zag Scan Parameters
-WIDTH = 95.0        # mm (Total width of scan area)
+WIDTH = 93        # mm (Total width of scan area)
 HEIGHT = 190.0      # mm (Total height of scan area)
-STEPS_W = 10        # Number of points in width
-STEPS_H = 15        # Number of points in height
+STEPS_W = 17        # Number of points in width
+STEPS_H = 22        # Number of points in height
 XY_SPEED = 5000     # mm/min for moving between points
 
 # Z-Axis / Focus Parameters
-Z_DROP_TOTAL = 8.0       # mm (Total depth to scan)
-STACK_DURATION = 3.0     # Seconds (How long the Z move should take)
+Z_DROP_TOTAL = 6       # mm (Total depth to scan)
+STACK_DURATION = 2.5     # Seconds (How long the Z move should take)
 Z_SPEED_DOWN = (Z_DROP_TOTAL / STACK_DURATION) * 60 
 Z_SPEED_UP = 1800        # mm/min (Fast return speed)
 
@@ -32,10 +32,10 @@ POST_STACK_DELAY = 0.1    # Time to wait after recording before moving XY
 # --- MANUAL CAMERA CALIBRATION ---
 # Update these values based on your manual tests!
 # ---------------------------------------------------
-CAM_EXPOSURE_US = 19714
-CAM_ANALOGUE_GAIN = 1.4993
-CAM_AWB_RED = 3.8374
-CAM_AWB_BLUE = 1.3009
+CAM_EXPOSURE_US = 50000
+CAM_ANALOGUE_GAIN = 2.3540
+CAM_AWB_RED = 2.1316
+CAM_AWB_BLUE = 3.3847
 
 # CAM_EXPOSURE_US = 20000       # Exposure time in Microseconds (e.g., 20000 = 20ms)
 # CAM_ANALOGUE_GAIN = 1.0       # Gain multiplier (1.0 = Base ISO)
