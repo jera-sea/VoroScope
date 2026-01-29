@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import argparse
+import math
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 from hardware import PrinterInterface
@@ -15,20 +16,13 @@ def run_scan(config_file):
     # Convert numeric config values that might be strings
     numeric_keys = [
         'start_x', 'end_x', 'start_y', 'end_y',
-        'stack_start_z', 'stack_end_z', 'stack_speed',
-        'framerate'
+        'step_size_x', 'step_size_y',
+        'stack_start_z', 'stack_end_z', 'stack_frames', 'framerate',
+        'exposure_us', 'analogue_gain', 'awb_red', 'awb_blue'
     ]
     for key in numeric_keys:
         if key in cfg:
             cfg[key] = float(cfg[key])
-
-    # 2. Load Calibration (if exists, otherwise defaults)
-    try:
-        with open("calibration.json", 'r') as f:
-            cal = json.load(f)
-    except FileNotFoundError:
-        print("No calibration found, using defaults.")
-        cal = {"exposure_us": 20000, "analogue_gain": 1.0, "awb_red": 2.0, "awb_blue": 2.0}
 
     # 3. Setup Paths
     save_path = os.path.join(cfg['output_folder'], cfg['sample_name'])
@@ -51,9 +45,9 @@ def run_scan(config_file):
         "FrameRate": cfg['framerate'],
         "AeEnable": False,
         "AwbEnable": False,
-        "ExposureTime": int(cal['exposure_us']),
-        "AnalogueGain": float(cal['analogue_gain']),
-        "ColourGains": (float(cal['awb_red']), float(cal['awb_blue']))
+        "ExposureTime": int(cfg.get('exposure_us', 50000)),
+        "AnalogueGain": float(cfg.get('analogue_gain', 2.3540)),
+        "ColourGains": (float(cfg.get('awb_red', 2.1316)), float(cfg.get('awb_blue', 3.3847)))
     }
     cam.set_controls(controls)
     time.sleep(1) # Settle
@@ -62,30 +56,37 @@ def run_scan(config_file):
     width_mm = cfg['end_x'] - cfg['start_x']
     height_mm = cfg['end_y'] - cfg['start_y']
     
-    # Basic logic: Ensure at least 1 step if distance is 0
-    # You might want to add 'step_size' to the UI inputs, for now inferring or fixed
-    # Assuming a FOV step or fixed count for this example:
-    steps_x = 5  # Placeholder: In real usage, calculate based on FOV
-    steps_y = 5  
-    
-    x_step_size = width_mm / steps_x if steps_x > 0 else 0
-    y_step_size = height_mm / steps_y if steps_y > 0 else 0
+    step_size_x_abs = abs(cfg.get('step_size_x', 5.0))
+    step_size_y_abs = abs(cfg.get('step_size_y', 5.0))
+
+    if step_size_x_abs == 0 or step_size_y_abs == 0:
+        raise ValueError("Step sizes cannot be zero.")
+
+    # Calculate number of intervals/steps needed to cover the area
+    steps_x = max(1, math.ceil(abs(width_mm) / step_size_x_abs))
+    steps_y = max(1, math.ceil(abs(height_mm) / step_size_y_abs))
+
+    # The actual step value for movement must have the correct sign
+    x_step_size = step_size_x_abs * (1 if width_mm >= 0 else -1)
+    y_step_size = step_size_y_abs * (1 if height_mm >= 0 else -1)
     
     # Z-Stack calculations
     z_dist = abs(cfg['stack_end_z'] - cfg['stack_start_z'])
-    z_speed = cfg['stack_speed'] * 60 # Convert mm/s to mm/min if needed
+    # Calculate Z speed based on frames and framerate
+    duration = cfg['stack_frames'] / cfg['framerate']
+    z_speed = (z_dist / duration) * 60 if duration > 0 else 1000
     
-    print(f"Starting Scan: {steps_x}x{steps_y} grid.")
+    print(f"Starting Scan: {steps_x}x{steps_y} grid of points.")
 
     try:
         # Move to safe Z before XY travel? usually good practice
         printer.move_to(z=cfg['stack_start_z'] + 2, speed=1000)
 
-        for yi in range(steps_y + 1):
+        for yi in range(steps_y):
             curr_y = cfg['start_y'] + (yi * y_step_size)
             
             # ZigZag Logic
-            x_range = range(steps_x + 1) if yi % 2 == 0 else reversed(range(steps_x + 1))
+            x_range = range(steps_x) if yi % 2 == 0 else reversed(range(steps_x))
             
             for xi in x_range:
                 curr_x = cfg['start_x'] + (xi * x_step_size)
@@ -108,6 +109,9 @@ def run_scan(config_file):
                 
                 # Stop Record
                 cam.stop_recording()
+
+                # Return Z to start position before moving XY
+                printer.move_to(z=cfg['stack_start_z'], speed=1000)
                 
     finally:
         cam.stop()

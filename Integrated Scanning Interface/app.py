@@ -29,9 +29,12 @@ def load_config():
             return json.load(f)
     return {
         "start_x": 0, "start_y": 0, "end_x": 10, "end_y": 10,
-        "stack_start_z": 5, "stack_end_z": 0, "stack_speed": 100,
-        "framerate": 30, "resolution": "4056x3040", 
-        "sample_name": "scan_001", "output_folder": "/home/pi/scans"
+        "step_size_x": 5, "step_size_y": 5,
+        "stack_start_z": 5, "stack_end_z": 0, "stack_frames": 150,
+        "framerate": 10, "resolution": "4056x3040",
+        "exposure_us": 50000, "analogue_gain": 2.3540,
+        "awb_red": 2.1316, "awb_blue": 3.3847,
+        "sample_name": "scan_001", "output_folder": "/home/pi/camera/ssd/scans"
     }
 
 # --- CAMERA STREAMING GENERATOR ---
@@ -257,7 +260,12 @@ def z_dry_run():
     data = request.json
     start_z = float(data.get('stack_start_z'))
     end_z = float(data.get('stack_end_z'))
-    speed = float(data.get('stack_speed')) * 60 # mm/min
+    
+    framerate = float(data.get('framerate', 30))
+    frames = float(data.get('stack_frames', 150))
+    z_dist = abs(end_z - start_z)
+    duration = frames / framerate
+    speed = (z_dist / duration) * 60 if duration > 0 else 1000
     
     def run_motion():
         # Move to start
@@ -342,23 +350,32 @@ HTML_TEMPLATE = r"""
         <div class="card">
             <h2>XY Scan Area</h2>
             <div class="row" style="align-items: flex-end;">
-                <div><label for="start_x">Start X</label><input type="number" id="start_x" placeholder="mm"></div>
-                <div><label for="start_y">Start Y</label><input type="number" id="start_y" placeholder="mm"></div>
+                <div><label for="start_x">Start X</label><input type="number" id="start_x" placeholder="mm" oninput="updateScanGrid()"></div>
+                <div><label for="start_y">Start Y</label><input type="number" id="start_y" placeholder="mm" oninput="updateScanGrid()"></div>
                 <button class="secondary" style="width: auto;" onclick="setFromCurrent('start')">Get Current</button>
             </div>
             <div class="row" style="align-items: flex-end; margin-top: 15px;">
-                <div><label for="end_x">End X</label><input type="number" id="end_x" placeholder="mm"></div>
-                <div><label for="end_y">End Y</label><input type="number" id="end_y" placeholder="mm"></div>
+                <div><label for="end_x">Desired End X</label><input type="number" id="end_x" placeholder="mm" oninput="updateScanGrid()"></div>
+                <div><label for="end_y">Desired End Y</label><input type="number" id="end_y" placeholder="mm" oninput="updateScanGrid()"></div>
                 <button class="secondary" style="width: auto;" onclick="setFromCurrent('end')">Get Current</button>
+            </div>
+            <div class="row" style="margin-top: 15px;">
+                <div><label for="step_size_x">Step Size X (mm)</label><input type="number" id="step_size_x" value="5" oninput="updateScanGrid()"></div>
+                <div><label for="step_size_y">Step Size Y (mm)</label><input type="number" id="step_size_y" value="5" oninput="updateScanGrid()"></div>
+            </div>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #555; font-size: 0.9em; color: #ccc;">
+                Calculated Steps: <strong id="calc_steps_x">0</strong> (X) &times; <strong id="calc_steps_y">0</strong> (Y)<br>
+                Calculated Points: <strong id="calc_steps_x">0</strong> (X) &times; <strong id="calc_steps_y">0</strong> (Y)<br>
+                Actual Scan Area End: X=<strong id="actual_end_x">0.00</strong>, Y=<strong id="actual_end_y">0.00</strong>
             </div>
             <label style="margin-top: 15px;">Move to Scan Area Corners</label>
             <div class="row">
                 <button class="secondary" onclick="moveToCorner('start', 'start')">Start X, Start Y</button>
-                <button class="secondary" onclick="moveToCorner('end', 'start')">End X, Start Y</button>
+                <button class="secondary" onclick="moveToCorner('end', 'start')">Desired End X, Start Y</button>
             </div>
             <div class="row">
                 <button class="secondary" onclick="moveToCorner('start', 'end')">Start X, End Y</button>
-                <button class="secondary" onclick="moveToCorner('end', 'end')">End X, End Y</button>
+                <button class="secondary" onclick="moveToCorner('end', 'end')">Desired End X, End Y</button>
             </div>
         </div>
 
@@ -372,8 +389,8 @@ HTML_TEMPLATE = r"""
                 <button class="secondary" onclick="setZFromCurrent('start')">Set Start Z</button>
                 <button class="secondary" onclick="setZFromCurrent('end')">Set End Z</button>
             </div>
-            <label>Stack Speed (mm/min)</label>
-            <input type="number" id="stack_speed" value="100">
+            <label>Stack Frames</label>
+            <input type="number" id="stack_frames" value="150">
             <button class="secondary" onclick="testZStack()">Test Z Motion (Dry Run)</button>
         </div>
         
@@ -412,6 +429,15 @@ HTML_TEMPLATE = r"""
         <div class="card">
             <h2>Scan Configuration</h2>
             <div style="border-bottom: 1px solid #555; padding-bottom: 15px; margin-bottom: 15px;">
+                <label>Camera Calibration Settings</label>
+                <div class="row">
+                    <div><label style="font-size:0.8em">Exposure (us)</label><input type="number" id="exposure_us"></div>
+                    <div><label style="font-size:0.8em">Gain</label><input type="number" id="analogue_gain" step="0.1"></div>
+                    <div><label style="font-size:0.8em">Red</label><input type="number" id="awb_red" step="0.01"></div>
+                    <div><label style="font-size:0.8em">Blue</label><input type="number" id="awb_blue" step="0.01"></div>
+                </div>
+            </div>
+            <div style="border-bottom: 1px solid #555; padding-bottom: 15px; margin-bottom: 15px;">
                 <label>Load Saved Configuration</label>
                 <div class="row">
                     <select id="config_file_select" style="flex-grow: 1;"></select>
@@ -437,7 +463,7 @@ HTML_TEMPLATE = r"""
             <label>Sample Name</label>
             <input type="text" id="sample_name" value="scan_001">
             <label>Output Folder</label>
-            <input type="text" id="output_folder" value="/home/pi/scans">
+            <input type="text" id="output_folder" value="/home/pi/camera/ssd/scans">
 
             <div style="margin-top: 20px;">
                 <button class="success" onclick="startScan()">START SCANNING</button>
@@ -461,6 +487,7 @@ HTML_TEMPLATE = r"""
             for (const [key, value] of Object.entries(data)) {
                 if(document.getElementById(key)) document.getElementById(key).value = value;
             }
+            updateScanGrid();
         });
         fetch('/api/calibration_status').then(r=>r.json()).then(d => {
             if(d.timestamp) document.getElementById('calibResult').innerText = "Last: " + new Date(d.timestamp*1000).toLocaleString();
@@ -637,9 +664,22 @@ HTML_TEMPLATE = r"""
 
     function runCalibration() {
         if(streamActive) { alert("Please turn off video feed first."); return; }
-        document.getElementById('calibResult').innerText = "Calibrating...";
-        fetch('/api/calibrate', {method: 'POST'});
-        // Poll for results would go here
+        document.getElementById('calibResult').innerText = "Calibrating (wait ~5s)...";
+        fetch('/api/calibrate', {method: 'POST'}).then(() => {
+            setTimeout(() => {
+                fetch('/api/calibration_status').then(r=>r.json()).then(d => {
+                    if(d.timestamp) {
+                        document.getElementById('exposure_us').value = d.exposure_us;
+                        document.getElementById('analogue_gain').value = d.analogue_gain;
+                        document.getElementById('awb_red').value = d.awb_red;
+                        document.getElementById('awb_blue').value = d.awb_blue;
+                        document.getElementById('calibResult').innerText = "Updated: " + new Date(d.timestamp*1000).toLocaleTimeString();
+                    } else {
+                        document.getElementById('calibResult').innerText = "Calibration failed.";
+                    }
+                });
+            }, 6000);
+        });
     }
 
     function saveConfig() {
@@ -652,9 +692,10 @@ HTML_TEMPLATE = r"""
         // Gather data from relevant inputs
         let config = {};
         const config_ids = [
-            'start_x', 'start_y', 'end_x', 'end_y',
-            'stack_start_z', 'stack_end_z', 'stack_speed',
-            'framerate', 'resolution', 'sample_name', 'output_folder'
+            'start_x', 'start_y', 'end_x', 'end_y', 'step_size_x', 'step_size_y',
+            'stack_start_z', 'stack_end_z', 'stack_frames',
+            'framerate', 'resolution', 'sample_name', 'output_folder',
+            'exposure_us', 'analogue_gain', 'awb_red', 'awb_blue'
         ];
         
         config_ids.forEach(id => {
@@ -730,6 +771,43 @@ HTML_TEMPLATE = r"""
         // Implementation for Z-only scan logic
         // This would call a specific endpoint similar to /move but for Z sweep
         alert("Functionality to be implemented in Phase 2: Calls Z-sweep logic");
+    }
+
+    function updateScanGrid() {
+        const startX = parseFloat(document.getElementById('start_x').value);
+        const startY = parseFloat(document.getElementById('start_y').value);
+        const endX = parseFloat(document.getElementById('end_x').value);
+        const endY = parseFloat(document.getElementById('end_y').value);
+        const stepX = parseFloat(document.getElementById('step_size_x').value);
+        const stepY = parseFloat(document.getElementById('step_size_y').value);
+
+        if (isNaN(startX) || isNaN(startY) || isNaN(endX) || isNaN(endY) || isNaN(stepX) || isNaN(stepY)) {
+            return; // Don't calculate if inputs are not valid numbers yet
+        }
+
+        const width = endX - startX;
+        const height = endY - startY;
+
+        const absStepX = Math.abs(stepX);
+        const absStepY = Math.abs(stepY);
+
+        let stepsX = 0;
+        if (absStepX > 0) {
+            stepsX = Math.max(1, Math.ceil(Math.abs(width) / absStepX));
+        }
+
+        let stepsY = 0;
+        if (absStepY > 0) {
+            stepsY = Math.max(1, Math.ceil(Math.abs(height) / absStepY));
+        }
+
+        const actualEndX = startX + ((stepsX - 1) * absStepX * Math.sign(width));
+        const actualEndY = startY + ((stepsY - 1) * absStepY * Math.sign(height));
+
+        document.getElementById('calc_steps_x').innerText = stepsX;
+        document.getElementById('calc_steps_y').innerText = stepsY;
+        document.getElementById('actual_end_x').innerText = actualEndX.toFixed(2);
+        document.getElementById('actual_end_y').innerText = actualEndY.toFixed(2);
     }
 
 </script>
