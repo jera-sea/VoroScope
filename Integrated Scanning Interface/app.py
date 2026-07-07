@@ -59,13 +59,13 @@ def generate_frames():
         cam.start()
 
         # Apply your specific tuning
-        cam.set_controls({
-            "AeEnable": False, 
-            "AwbEnable": False,
-            "ExposureTime": 20000,
-            "AnalogueGain": 1.0,
-            "ColourGains": (2.1, 1.6)
-        })
+        # cam.set_controls({
+        #     "AeEnable": False, 
+        #     "AwbEnable": False,
+        #     "ExposureTime": 20000,
+        #     "AnalogueGain": 1.0,
+        #     "ColourGains": (2.1, 1.6)
+        # })
         
         streaming_active = True
         
@@ -223,6 +223,18 @@ def calib_status():
         with open(CALIB_FILE, 'r') as f:
             return jsonify(json.load(f))
     return jsonify({})
+
+@app.route('/api/validate_path', methods=['POST'])
+def validate_path():
+    data = request.json
+    folder = data.get('output_folder')
+    name = data.get('sample_name')
+    
+    if not folder or not name:
+        return jsonify({"exists": False})
+        
+    full_path = os.path.join(folder, name)
+    return jsonify({"exists": os.path.exists(full_path)})
 
 @app.route('/api/scan/start', methods=['POST'])
 def start_scan():
@@ -722,26 +734,45 @@ HTML_TEMPLATE = r"""
     function startScan() {
         if(streamActive) { alert("Please turn off video feed first."); return; }
         
-        // Gather data
-        let config = {};
-        const inputs = document.querySelectorAll('input, select');
-        inputs.forEach(i => config[i.id] = i.value);
-        
-        // Pre-calculate approx duration for progress bar (Simple estimate)
-        // In reality, this should be better calculated in Python
-        let areaX = Math.abs(config.end_x - config.start_x);
-        let areaY = Math.abs(config.end_y - config.start_y);
-        // Estimate logic hidden for brevity
-        
-        fetch('/api/scan/start', {
+        const sampleName = document.getElementById('sample_name').value;
+        const outputFolder = document.getElementById('output_folder').value;
+
+        if (!sampleName) {
+            alert("Please enter a sample name.");
+            return;
+        }
+
+        if (!confirm("Confirm Sample Name: " + sampleName)) {
+            return;
+        }
+
+        fetch('/api/validate_path', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(config)
-        }).then(r => r.json()).then(data => {
-            if(data.status === 'error') alert(data.message);
-            else {
-                monitorScan();
+            body: JSON.stringify({output_folder: outputFolder, sample_name: sampleName})
+        })
+        .then(r => r.json())
+        .then(validation => {
+            if (validation.exists) {
+                alert("A folder with the name '" + sampleName + "' already exists in the output directory.\nPlease enter a different name.");
+                return;
             }
+
+            // Gather data
+            let config = {};
+            const inputs = document.querySelectorAll('input, select');
+            inputs.forEach(i => config[i.id] = i.value);
+            
+            fetch('/api/scan/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
+            }).then(r => r.json()).then(data => {
+                if(data.status === 'error') alert(data.message);
+                else {
+                    monitorScan();
+                }
+            });
         });
     }
     
