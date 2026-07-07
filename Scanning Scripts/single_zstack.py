@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import json
 import math
@@ -31,9 +32,9 @@ def run_single_zstack(config_file):
             cfg[key] = float(cfg[key])
 
     # 2. Setup Output Path
-    save_path = os.path.join(cfg['output_folder'], 'test_image')
+    save_path = os.path.join(cfg['output_folder'], cfg['sample_name'])
     os.makedirs(save_path, exist_ok=True)
-    output_file = os.path.join(save_path, "single_zstack.h264")
+    output_file = os.path.join(save_path, f"{cfg['sample_name']}_zstack.h264")
     print(f"Output will be saved to: {output_file}")
 
     # 3. Initialize Hardware
@@ -96,4 +97,5 @@ def run_single_zstack(config_file):
         print(f"Done. File saved to: {output_file}")
 
 if __name__ == "__main__":
-    run_single_zstack(CONFIG_FILE)
+    config_path = sys.argv[1] if len(sys.argv) > 1 else CONFIG_FILE
+    run_single_zstack(config_path)

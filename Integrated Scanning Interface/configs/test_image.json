@@ -1,0 +1,19 @@
+{
+    "start_x": "84",
+    "start_y": "41.999999999549686",
+    "end_x": "174",
+    "end_y": "231",
+    "step_size_x": "8.6",
+    "step_size_y": "5.5",
+    "stack_start_z": "40",
+    "stack_end_z": "34",
+    "stack_frames": "30",
+    "framerate": "30",
+    "resolution": "4056x3040",
+    "sample_name": "scan_001",
+    "output_folder": "/home/pi/scans",
+    "exposure_us": "50000",
+    "analogue_gain": "2.354",
+    "awb_red": "2.1316",
+    "awb_blue": "3.3847"
+}

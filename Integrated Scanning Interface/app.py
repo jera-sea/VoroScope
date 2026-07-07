@@ -18,6 +18,7 @@ CALIB_FILE = "calibration.json"
 
 # Process handles
 scan_process = None
+zstack_test_process = None
 
 # Global flag for camera streaming
 camera_lock = threading.Lock()
@@ -266,30 +267,27 @@ def stop_scan():
         return jsonify({"status": "stopping"})
     return jsonify({"status": "not_running"})
 
-@app.route('/api/scan/z_dry_run', methods=['POST'])
-def z_dry_run():
-    """Moves Z between focus points at scan speed without stopping video."""
-    data = request.json
-    start_z = float(data.get('stack_start_z'))
-    end_z = float(data.get('stack_end_z'))
-    
-    framerate = float(data.get('framerate', 30))
-    frames = float(data.get('stack_frames', 150))
-    z_dist = abs(end_z - start_z)
-    duration = frames / framerate
-    speed = (z_dist / duration) * 60 if duration > 0 else 1000
-    
-    def run_motion():
-        # Move to start
-        printer.move_to(z=start_z, speed=2000)
-        time.sleep(1)
-        # Execute the slow focus movement
-        printer.move_to(z=end_z, speed=speed)
-        print("Z Dry Run Complete")
+@app.route('/api/scan/zstack_test', methods=['POST'])
+def zstack_test():
+    """Runs a single-column Z focus-stack capture using the current scan config."""
+    global zstack_test_process, streaming_active
 
-    # Run in a background thread so the UI doesn't hang
-    threading.Thread(target=run_motion).start()
-    return jsonify({"status": "motion_started"})
+    if streaming_active:
+        return jsonify({"status": "error", "message": "Stop video stream before testing"}), 409
+
+    if scan_process and scan_process.poll() is None:
+        return jsonify({"status": "error", "message": "Scan already running"}), 409
+
+    if zstack_test_process and zstack_test_process.poll() is None:
+        return jsonify({"status": "error", "message": "Z-stack test already running"}), 409
+
+    zstack_test_process = subprocess.Popen(["python3", "single_zstack.py", CONFIG_FILE])
+    return jsonify({"status": "started"})
+
+@app.route('/api/scan/zstack_test/status', methods=['GET'])
+def zstack_test_status():
+    running = (zstack_test_process is not None and zstack_test_process.poll() is None)
+    return jsonify({"running": running})
 
 @app.route('/api/stream/force_release', methods=['POST'])
 def force_release():
@@ -403,7 +401,7 @@ HTML_TEMPLATE = r"""
             </div>
             <label>Stack Frames</label>
             <input type="number" id="stack_frames" value="150">
-            <button class="secondary" onclick="testZStack()">Test Z Motion (Dry Run)</button>
+            <button class="secondary" id="zstackTestBtn" onclick="runZStackTest()">Test Z Motion (Focus Stack)</button>
         </div>
         
     </div>
@@ -798,10 +796,52 @@ HTML_TEMPLATE = r"""
         }, 2000);
     }
     
-    function testZStack() {
-        // Implementation for Z-only scan logic
-        // This would call a specific endpoint similar to /move but for Z sweep
-        alert("Functionality to be implemented in Phase 2: Calls Z-sweep logic");
+    function runZStackTest() {
+        if(streamActive) { alert("Please turn off video feed first."); return; }
+
+        const sampleName = document.getElementById('sample_name').value;
+        if (!sampleName) {
+            alert("Please enter a sample name.");
+            return;
+        }
+
+        // Save current form state to the scan config so the test uses up-to-date settings
+        let config = {};
+        const inputs = document.querySelectorAll('input, select');
+        inputs.forEach(i => config[i.id] = i.value);
+
+        fetch('/api/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(config)
+        })
+        .then(r => r.json())
+        .then(() => fetch('/api/scan/zstack_test', {method: 'POST'}))
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'error') {
+                alert(data.message);
+            } else {
+                monitorZStackTest();
+            }
+        });
+    }
+
+    function monitorZStackTest() {
+        const btn = document.getElementById('zstackTestBtn');
+        btn.disabled = true;
+        btn.innerText = "Running Z-Stack Test...";
+
+        let check = setInterval(() => {
+            fetch('/api/scan/zstack_test/status').then(r=>r.json()).then(d => {
+                if (!d.running) {
+                    clearInterval(check);
+                    btn.disabled = false;
+                    btn.innerText = "Test Z Motion (Focus Stack)";
+                    alert("Z-stack test complete.");
+                }
+            });
+        }, 2000);
     }
 
     function updateScanGrid() {

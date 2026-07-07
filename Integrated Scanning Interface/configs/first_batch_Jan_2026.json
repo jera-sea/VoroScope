@@ -1,0 +1,19 @@
+{
+    "start_x": "100",
+    "start_y": "50",
+    "end_x": "193",
+    "end_y": "240",
+    "step_size_x": "5.5",
+    "step_size_y": "8.6",
+    "stack_start_z": "43.90",
+    "stack_end_z": "37.9",
+    "stack_frames": "30",
+    "framerate": "10",
+    "resolution": "4056x3040",
+    "sample_name": "HT3P4_December_2025",
+    "output_folder": "/home/pi/camera/ssd/scans",
+    "exposure_us": "50000",
+    "analogue_gain": "2.354",
+    "awb_red": "2.1316",
+    "awb_blue": "3.3847"
+}
