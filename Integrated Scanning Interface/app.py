@@ -310,9 +310,11 @@ HTML_TEMPLATE = r"""
     <title>Microscope Scanner Control</title>
     <style>
         body { font-family: sans-serif; background: #222; color: #eee; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .container { max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: 0.8fr 1.4fr 0.8fr; gap: 20px; align-items: start; }
         .card { background: #333; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         h2 { border-bottom: 1px solid #555; padding-bottom: 10px; margin-top: 0; }
+        h3 { color: #ccc; font-size: 1em; margin: 20px 0 5px; padding-top: 15px; border-top: 1px solid #555; }
+        h3:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
         label { display: block; margin: 10px 0 5px; font-size: 0.9em; color: #ccc; }
         input, select { width: 100%; padding: 8px; background: #444; border: 1px solid #555; color: white; border-radius: 4px; box-sizing: border-box;}
         button { background: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; margin-top: 10px; width: 100%; }
@@ -320,183 +322,238 @@ HTML_TEMPLATE = r"""
         button.danger { background: #dc3545; }
         button.success { background: #28a745; }
         button.secondary { background: #6c757d; }
+        button.dirty { background: #dc3545; }
         .row { display: flex; gap: 10px; }
         .video-box { width: 100%; height: 480px; background: #000; display: flex; align-items: center; justify-content: center; border: 2px solid #555; }
         .pos-display { font-family: monospace; font-size: 1.2em; color: #0f0; margin-bottom: 10px; text-align: center; }
         #progressBarContainer { width: 100%; background: #444; height: 20px; border-radius: 10px; margin-top: 20px; display:none;}
         #progressBar { width: 0%; height: 100%; background: #28a745; border-radius: 10px; transition: width 0.5s; }
+        .config-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        .config-table th { text-align: left; color: #ccc; font-size: 0.85em; padding: 6px 8px; border-bottom: 1px solid #555; }
+        .config-table td { padding: 6px 8px; border-bottom: 1px solid #444; vertical-align: middle; }
+        .config-table tr:nth-child(even) { background: #3a3a3a; }
+        .config-table input { padding: 5px; margin: 0; width: 100px; }
+        .config-table .cur-val { color: #aaa; font-family: monospace; }
+        .config-table .param-name { font-family: monospace; color: #9cdcfe; }
+        .config-table .param-desc { color: #ccc; font-size: 0.9em; }
+        .config-table .get-current-btn { width: auto; padding: 5px 8px; margin: 0 0 0 6px; font-size: 0.8em; }
+        .config-table .new-val-cell { display: flex; align-items: center; }
     </style>
 </head>
 <body>
 <div class="container">
-    
-    <div style="display: flex; flex-direction: column; gap: 20px;">
-        
-        <div class="card">
-            <h2>Coordinates & Jog</h2>
-            <div class="pos-display">X: <span id="curX">0.00</span> Y: <span id="curY">0.00</span> Z: <span id="curZ">0.00</span></div>
-            <div class="row">
-                <input type="number" id="jogX" placeholder="X">
-                <input type="number" id="jogY" placeholder="Y">
-                <input type="number" id="jogZ" placeholder="Z">
-            </div>
-            <button onclick="manualMove()">Move to Coordinates</button>
-            <button class="secondary" onclick="updatePos()">Refresh Position</button>
 
-            <div style="border-top: 1px solid #555; margin-top: 20px; padding-top: 15px;">
-                <label for="jog_step">Jog Step (mm)</label>
-                <input type="number" id="jog_step" value="1" step="0.1">
-                <div class="row">
-                    <button class="secondary" onclick="jogAxis('x', 1)">X+</button>
-                    <button class="secondary" onclick="jogAxis('x', -1)">X-</button>
-                    <button class="secondary" onclick="jogAxis('y', 1)">Y+</button>
-                    <button class="secondary" onclick="jogAxis('y', -1)">Y-</button>
-                    <button class="secondary" onclick="jogAxis('z', 1)">Z+</button>
-                    <button class="secondary" onclick="jogAxis('z', -1)">Z-</button>
-                </div>
-            </div>
+    <div class="card">
+        <h2>Motion Control</h2>
+
+        <div class="pos-display">X: <span id="curX">0.00</span> Y: <span id="curY">0.00</span> Z: <span id="curZ">0.00</span></div>
+        <div class="row">
+            <input type="number" id="jogX" placeholder="X">
+            <input type="number" id="jogY" placeholder="Y">
+            <input type="number" id="jogZ" placeholder="Z">
+        </div>
+        <button onclick="manualMove()">Move to Coordinates</button>
+        <button class="secondary" onclick="updatePos()">Refresh Position</button>
+
+        <h3>Jog</h3>
+        <label for="jog_step">Jog Step (mm)</label>
+        <input type="number" id="jog_step" value="1" step="0.1">
+        <div class="row">
+            <button class="secondary" onclick="jogAxis('x', 1)">X+</button>
+            <button class="secondary" onclick="jogAxis('x', -1)">X-</button>
+            <button class="secondary" onclick="jogAxis('y', 1)">Y+</button>
+            <button class="secondary" onclick="jogAxis('y', -1)">Y-</button>
+            <button class="secondary" onclick="jogAxis('z', 1)">Z+</button>
+            <button class="secondary" onclick="jogAxis('z', -1)">Z-</button>
         </div>
 
-        <div class="card">
-            <h2>XY Scan Area</h2>
-            <div class="row" style="align-items: flex-end;">
-                <div><label for="start_x">Start X</label><input type="number" id="start_x" placeholder="mm" oninput="updateScanGrid()"></div>
-                <div><label for="start_y">Start Y</label><input type="number" id="start_y" placeholder="mm" oninput="updateScanGrid()"></div>
-                <button class="secondary" style="width: auto;" onclick="setFromCurrent('start')">Get Current</button>
-            </div>
-            <div class="row" style="align-items: flex-end; margin-top: 15px;">
-                <div><label for="end_x">Desired End X</label><input type="number" id="end_x" placeholder="mm" oninput="updateScanGrid()"></div>
-                <div><label for="end_y">Desired End Y</label><input type="number" id="end_y" placeholder="mm" oninput="updateScanGrid()"></div>
-                <button class="secondary" style="width: auto;" onclick="setFromCurrent('end')">Get Current</button>
-            </div>
-            <div class="row" style="margin-top: 15px;">
-                <div><label for="step_size_x">Step Size X (mm)</label><input type="number" id="step_size_x" value="5" oninput="updateScanGrid()"></div>
-                <div><label for="step_size_y">Step Size Y (mm)</label><input type="number" id="step_size_y" value="5" oninput="updateScanGrid()"></div>
-            </div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #555; font-size: 0.9em; color: #ccc;">
-                Calculated Steps: <strong id="calc_steps_x">0</strong> (X) &times; <strong id="calc_steps_y">0</strong> (Y)<br>
-                Calculated Points: <strong id="calc_steps_x">0</strong> (X) &times; <strong id="calc_steps_y">0</strong> (Y)<br>
-                Actual Scan Area End: X=<strong id="actual_end_x">0.00</strong>, Y=<strong id="actual_end_y">0.00</strong>
-            </div>
-            <label style="margin-top: 15px;">Move to Scan Area Corners</label>
-            <div class="row">
-                <button class="secondary" onclick="moveToCorner('start', 'start')">Start X, Start Y</button>
-                <button class="secondary" onclick="moveToCorner('end', 'start')">Desired End X, Start Y</button>
-            </div>
-            <div class="row">
-                <button class="secondary" onclick="moveToCorner('start', 'end')">Start X, End Y</button>
-                <button class="secondary" onclick="moveToCorner('end', 'end')">Desired End X, End Y</button>
-            </div>
+        <h3>Move to Scan Area Corners</h3>
+        <div class="row">
+            <button class="secondary" onclick="moveToCorner('start', 'start')">Start X, Start Y</button>
+            <button class="secondary" onclick="moveToCorner('end', 'start')">Desired End X, Start Y</button>
         </div>
-
-        <div class="card">
-            <h2>Z Focus Stack</h2>
-            <div class="row">
-                <div><label>Start Z</label><input type="number" id="stack_start_z"></div>
-                <div><label>End Z</label><input type="number" id="stack_end_z"></div>
-            </div>
-            <div class="row">
-                <button class="secondary" onclick="setZFromCurrent('start')">Set Start Z</button>
-                <button class="secondary" onclick="setZFromCurrent('end')">Set End Z</button>
-            </div>
-            <label>Stack Frames</label>
-            <input type="number" id="stack_frames" value="150">
-            <button class="secondary" id="zstackTestBtn" onclick="runZStackTest()">Test Z Motion (Focus Stack)</button>
+        <div class="row">
+            <button class="secondary" onclick="moveToCorner('start', 'end')">Start X, End Y</button>
+            <button class="secondary" onclick="moveToCorner('end', 'end')">Desired End X, End Y</button>
         </div>
-        
     </div>
 
-    <div style="display: flex; flex-direction: column; gap: 20px;">
-        
-        <div class="card">
-            <h2>Camera Feed</h2>
-            
+    <div class="card">
+        <h2>Configuration</h2>
 
-            <div class="card mb-4">
-                <div class="card-header bg-secondary">Camera Feed</div>
-                <div class="card-body text-center">
-                    <p class="text-muted">
-                        Clicking the button below will open the raw video feed in a new tab.
-                        <br>
-                        <strong>Close the tab to release the camera for scanning.</strong>
-                    </p>
-                    
-                    <button onclick="window.open('/video_feed', '_blank')">Open Live Stream</button>
-
-                    <button onclick="forceRelease()" class="danger">Force Release Camera</button>
-                </div>
-            </div>
-            
-            <div style="margin-top: 15px; border-top: 1px solid #555; padding-top: 10px;">
-                <label>Calibration</label>
-                <div class="row">
-                    <button class="secondary" onclick="runCalibration()">Run White Balance</button>
-                    <div id="calibResult" style="align-self: center; font-size: 0.8em; color: #aaa;"></div>
-                </div>
-            </div>
+        <div class="row">
+            <select id="config_file_select" style="flex-grow: 1;"></select>
+            <button class="secondary" style="width: auto;" onclick="loadSelectedConfig()">Load Config</button>
+        </div>
+        <div class="row">
+            <input type="text" id="config_filename" placeholder="e.g., my_scan_settings">
+            <button class="secondary" id="saveConfigBtn" style="width: auto;" onclick="saveConfig()">Save Config</button>
         </div>
 
-        <div class="card">
-            <h2>Scan Configuration</h2>
-            <div style="border-bottom: 1px solid #555; padding-bottom: 15px; margin-bottom: 15px;">
-                <label>Camera Calibration Settings</label>
-                <div class="row">
-                    <div><label style="font-size:0.8em">Exposure (us)</label><input type="number" id="exposure_us"></div>
-                    <div><label style="font-size:0.8em">Gain</label><input type="number" id="analogue_gain" step="0.1"></div>
-                    <div><label style="font-size:0.8em">Red</label><input type="number" id="awb_red" step="0.01"></div>
-                    <div><label style="font-size:0.8em">Blue</label><input type="number" id="awb_blue" step="0.01"></div>
-                </div>
-            </div>
-            <div style="border-bottom: 1px solid #555; padding-bottom: 15px; margin-bottom: 15px;">
-                <label>Load Saved Configuration</label>
-                <div class="row">
-                    <select id="config_file_select" style="flex-grow: 1;"></select>
-                    <button class="secondary" style="width: auto;" onclick="loadSelectedConfig()">Load Config</button>
-                </div>
-            </div>
-            <div style="border-bottom: 1px solid #555; padding-bottom: 15px; margin-bottom: 15px;">
-                <label>Configuration File Name</label>
-                <div class="row">
-                    <input type="text" id="config_filename" placeholder="e.g., my_scan_settings">
-                    <button class="secondary" style="width: auto;" onclick="saveConfig()">Save Config</button>
-                </div>
-            </div>
-            <div class="row">
-                <div><label>Framerate</label><input type="number" id="framerate" value="30"></div>
-                <div><label>Resolution</label>
-                    <select id="resolution">
-                        <option value="4056x3040">4056x3040 (Full)</option>
-                        <option value="1920x1080">1920x1080 (1080p)</option>
-                    </select>
-                </div>
-            </div>
-            <label>Sample Name</label>
-            <input type="text" id="sample_name" value="scan_001">
-            <label>Output Folder</label>
-            <input type="text" id="output_folder" value="/home/pi/camera/ssd/scans">
+        <table class="config-table" id="configTable">
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Current Value</th>
+                    <th>New Value</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Rows generated by buildConfigTable() -->
+            </tbody>
+        </table>
 
-            <div style="margin-top: 20px;">
-                <button class="success" onclick="startScan()">START SCANNING</button>
-                <button class="danger" onclick="stopScan()">ABORT SCAN</button>
-            </div>
-            
-            <div id="progressBarContainer">
-                <div id="progressBar"></div>
-            </div>
-            <div id="scanStatus" style="text-align: center; margin-top: 10px; color: #ffc107;"></div>
+        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #555; font-size: 0.9em; color: #ccc;">
+            Calculated Steps: <strong id="calc_steps_x">0</strong> (X) &times; <strong id="calc_steps_y">0</strong> (Y)<br>
+            Actual Scan Area End: X=<strong id="actual_end_x">0.00</strong>, Y=<strong id="actual_end_y">0.00</strong>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Camera & Scan Control</h2>
+
+        <label>Sample Name</label>
+        <input type="text" id="sample_name" value="scan_001">
+
+        <h3>Camera Feed</h3>
+        <p style="color: #aaa; font-size: 0.9em;">
+            Clicking the button below will open the raw video feed in a new tab.
+            <br>
+            <strong>Close the tab to release the camera for scanning.</strong>
+        </p>
+        <button onclick="window.open('/video_feed', '_blank')">Open Live Stream</button>
+        <button onclick="forceRelease()" class="danger">Force Release Camera</button>
+
+        <h3>Calibration</h3>
+        <div class="row">
+            <button class="secondary" onclick="runCalibration()">Run White Balance</button>
+            <div id="calibResult" style="align-self: center; font-size: 0.8em; color: #aaa;"></div>
         </div>
 
+        <h3>Z-Stack Test</h3>
+        <button class="secondary" id="zstackTestBtn" onclick="runZStackTest()">Test Z Motion (Focus Stack)</button>
+
+        <h3>Scan</h3>
+        <button class="success" onclick="startScan()">START SCANNING</button>
+        <button class="danger" onclick="stopScan()">ABORT SCAN</button>
+
+        <div id="progressBarContainer">
+            <div id="progressBar"></div>
+        </div>
+        <div id="scanStatus" style="text-align: center; margin-top: 10px; color: #ffc107;"></div>
     </div>
 </div>
 
 <script>
+    // Configuration table parameters: id, label, optional position-axis for "Get Current" button, description
+    const CONFIG_PARAMS = [
+        { id: 'start_x', label: 'Start X', axis: 'x', desc: 'X coordinate (mm) where the scan grid begins.' },
+        { id: 'start_y', label: 'Start Y', axis: 'y', desc: 'Y coordinate (mm) where the scan grid begins.' },
+        { id: 'end_x', label: 'Desired End X', axis: 'x', desc: 'Desired X coordinate (mm) where the scan grid ends.' },
+        { id: 'end_y', label: 'Desired End Y', axis: 'y', desc: 'Desired Y coordinate (mm) where the scan grid ends.' },
+        { id: 'step_size_x', label: 'Step Size X', desc: 'Distance (mm) between adjacent scan columns along X.' },
+        { id: 'step_size_y', label: 'Step Size Y', desc: 'Distance (mm) between adjacent scan rows along Y.' },
+        { id: 'stack_start_z', label: 'Stack Start Z', axis: 'z', desc: 'Z height (mm) where each focus stack begins.' },
+        { id: 'stack_end_z', label: 'Stack End Z', axis: 'z', desc: 'Z height (mm) where each focus stack ends.' },
+        { id: 'stack_frames', label: 'Stack Frames', desc: 'Number of video frames captured during each Z sweep.' },
+        { id: 'framerate', label: 'Framerate', desc: 'Camera capture rate (frames per second) during recording.' },
+        { id: 'resolution', label: 'Resolution', desc: 'Camera capture resolution (width x height).', isSelect: true, options: [
+            { value: '4056x3040', label: '4056x3040 (Full)' },
+            { value: '1920x1080', label: '1920x1080 (1080p)' }
+        ] },
+        { id: 'exposure_us', label: 'Exposure (us)', desc: 'Manual camera exposure time, in microseconds.' },
+        { id: 'analogue_gain', label: 'Analogue Gain', desc: 'Manual camera analogue gain (sensor sensitivity).' },
+        { id: 'awb_red', label: 'AWB Red', desc: 'Manual white-balance gain, red channel.' },
+        { id: 'awb_blue', label: 'AWB Blue', desc: 'Manual white-balance gain, blue channel.' },
+        { id: 'output_folder', label: 'Output Folder', desc: 'Base directory on disk where scan output is saved.', isText: true }
+    ];
+
+    function buildConfigTable() {
+        const tbody = document.querySelector('#configTable tbody');
+        tbody.innerHTML = '';
+        CONFIG_PARAMS.forEach(p => {
+            const tr = document.createElement('tr');
+
+            const nameTd = document.createElement('td');
+            nameTd.innerHTML = '<span class="param-name">' + p.label + '</span>';
+            tr.appendChild(nameTd);
+
+            const curTd = document.createElement('td');
+            curTd.innerHTML = '<span class="cur-val" id="cur_cfg_' + p.id + '"></span>';
+            tr.appendChild(curTd);
+
+            const newTd = document.createElement('td');
+            const wrapper = document.createElement('div');
+            wrapper.className = 'new-val-cell';
+            let inputEl;
+            if (p.isSelect) {
+                inputEl = document.createElement('select');
+                p.options.forEach(opt => {
+                    const o = document.createElement('option');
+                    o.value = opt.value;
+                    o.innerText = opt.label;
+                    inputEl.appendChild(o);
+                });
+            } else {
+                inputEl = document.createElement('input');
+                inputEl.type = p.isText ? 'text' : 'number';
+            }
+            inputEl.id = p.id;
+            inputEl.oninput = markConfigDirty;
+            wrapper.appendChild(inputEl);
+
+            if (p.axis) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'secondary get-current-btn';
+                btn.innerText = 'Get Current';
+                btn.onclick = () => getCurrentIntoRow(p.id, p.axis);
+                wrapper.appendChild(btn);
+            }
+            newTd.appendChild(wrapper);
+            tr.appendChild(newTd);
+
+            const descTd = document.createElement('td');
+            descTd.className = 'param-desc';
+            descTd.innerText = p.desc;
+            tr.appendChild(descTd);
+
+            tbody.appendChild(tr);
+        });
+
+        // start_x/end_x/step_size_x etc. also drive the scan-grid preview
+        ['start_x', 'start_y', 'end_x', 'end_y', 'step_size_x', 'step_size_y'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateScanGrid);
+        });
+    }
+
+    function markConfigDirty() {
+        document.getElementById('saveConfigBtn').classList.add('dirty');
+    }
+
+    function getCurrentIntoRow(fieldId, axis) {
+        fetch('/api/position').then(r => r.json()).then(pos => {
+            document.getElementById(fieldId).value = pos[axis];
+            markConfigDirty();
+        });
+    }
+
+    function applyConfigValues(data) {
+        for (const [key, value] of Object.entries(data)) {
+            const el = document.getElementById(key);
+            if (el) el.value = value;
+            const curEl = document.getElementById('cur_cfg_' + key);
+            if (curEl) curEl.innerText = value;
+        }
+    }
+
     // Load config on startup
     window.onload = function() {
+        buildConfigTable();
         updatePos();
         fetch('/api/config').then(r=>r.json()).then(data => {
-            for (const [key, value] of Object.entries(data)) {
-                if(document.getElementById(key)) document.getElementById(key).value = value;
-            }
+            applyConfigValues(data);
             updateScanGrid();
         });
         fetch('/api/calibration_status').then(r=>r.json()).then(d => {
@@ -540,12 +597,8 @@ HTML_TEMPLATE = r"""
             return r.json();
         })
         .then(data => {
-            for (const [key, value] of Object.entries(data)) {
-                const el = document.getElementById(key);
-                if(el) {
-                    el.value = value;
-                }
-            }
+            applyConfigValues(data);
+            document.getElementById('saveConfigBtn').classList.remove('dirty');
             // Also update the save filename input for convenience
             document.getElementById('config_filename').value = filename.replace('.json', '');
             alert('Configuration "' + filename + '" loaded.');
@@ -611,19 +664,6 @@ HTML_TEMPLATE = r"""
         }).then(() => setTimeout(updatePos, 500));
     }
 
-    function setFromCurrent(prefix) {
-        fetch('/api/position').then(r=>r.json()).then(pos => {
-            document.getElementById(prefix+'_x').value = pos.x;
-            document.getElementById(prefix+'_y').value = pos.y;
-        });
-    }
-    
-    function setZFromCurrent(prefix) {
-        fetch('/api/position').then(r=>r.json()).then(pos => {
-            document.getElementById('stack_'+prefix+'_z').value = pos.z;
-        });
-    }
-
     function moveToCorner(x_type, y_type) { // x_type, y_type are 'start' or 'end'
         const x_val = document.getElementById(x_type + '_x').value;
         const y_val = document.getElementById(y_type + '_y').value;
@@ -646,31 +686,6 @@ HTML_TEMPLATE = r"""
     }
 
     let streamActive = false;
-    function toggleStream() {
-        streamActive = !streamActive;
-        const img = document.getElementById('videoStream');
-        const txt = document.getElementById('videoPlaceholder');
-        const btn = document.getElementById('btnStream');
-
-        fetch('/api/stream/toggle', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({active: streamActive})
-        }).then(() => {
-            if(streamActive) {
-                img.src = "/video_feed?" + new Date().getTime(); // cache bust
-                img.style.display = 'block';
-                txt.style.display = 'none';
-                btn.innerText = "Turn Off Feed";
-                btn.classList.add('danger');
-            } else {
-                img.src = "";
-                img.style.display = 'none';
-                txt.style.display = 'block';
-                btn.innerText = "Turn On Feed";
-                btn.classList.remove('danger');
-            }
-        });
-    }
 
     function runCalibration() {
         if(streamActive) { alert("Please turn off video feed first."); return; }
@@ -683,6 +698,7 @@ HTML_TEMPLATE = r"""
                         document.getElementById('analogue_gain').value = d.analogue_gain;
                         document.getElementById('awb_red').value = d.awb_red;
                         document.getElementById('awb_blue').value = d.awb_blue;
+                        markConfigDirty();
                         document.getElementById('calibResult').innerText = "Updated: " + new Date(d.timestamp*1000).toLocaleTimeString();
                     } else {
                         document.getElementById('calibResult').innerText = "Calibration failed.";
@@ -721,6 +737,11 @@ HTML_TEMPLATE = r"""
             body: JSON.stringify(payload)
         }).then(r => r.json()).then(data => {
             if (data.status === 'saved') {
+                CONFIG_PARAMS.forEach(p => {
+                    const curEl = document.getElementById('cur_cfg_' + p.id);
+                    if (curEl) curEl.innerText = document.getElementById(p.id).value;
+                });
+                document.getElementById('saveConfigBtn').classList.remove('dirty');
                 alert('Configuration saved to ' + data.filepath);
                 populateConfigList();
             } else {
