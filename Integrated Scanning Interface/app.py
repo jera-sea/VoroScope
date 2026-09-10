@@ -5,6 +5,7 @@ import subprocess
 import signal
 from flask import Flask, render_template_string, request, jsonify, Response
 from hardware import PrinterInterface
+import scanner  # for the output-folder suffixes; safe to import (no picamera2 at module level)
 import cv2
 import time
 # We import Picamera2 only inside the streaming thread to allow releasing it
@@ -31,6 +32,7 @@ def load_config():
     return {
         "start_x": 0, "start_y": 0, "end_x": 10, "end_y": 10,
         "step_size_x": 5, "step_size_y": 5,
+        "dual_set": "off", "step_size_x_train": 8, "step_size_y_train": 11,
         "stack_start_z": 5, "stack_end_z": 0, "stack_frames": 150,
         "framerate": 10, "resolution": "4056x3040",
         "exposure_us": 50000, "analogue_gain": 2.3540,
@@ -227,15 +229,25 @@ def calib_status():
 
 @app.route('/api/validate_path', methods=['POST'])
 def validate_path():
+    """Refuse to start a scan over folders that already hold tiles.
+
+    scanner.py uses makedirs(exist_ok=True), so a name collision silently
+    overwrites a previous card. The suffixed folders are what actually get
+    written - the bare {sample_name} folder is only used by the Z-stack test.
+    """
     data = request.json
     folder = data.get('output_folder')
     name = data.get('sample_name')
-    
+
     if not folder or not name:
         return jsonify({"exists": False})
-        
-    full_path = os.path.join(folder, name)
-    return jsonify({"exists": os.path.exists(full_path)})
+
+    targets = [name + scanner.INFER_SUFFIX]
+    if str(data.get('dual_set', 'off')).strip().lower() in ('on', 'true', '1', 'yes'):
+        targets.append(name + scanner.TRAIN_SUFFIX)
+
+    collisions = [t for t in targets if os.path.exists(os.path.join(folder, t))]
+    return jsonify({"exists": bool(collisions), "collisions": collisions})
 
 @app.route('/api/scan/start', methods=['POST'])
 def start_scan():
@@ -405,8 +417,18 @@ HTML_TEMPLATE = r"""
         </table>
 
         <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #555; font-size: 0.9em; color: #ccc;">
-            Calculated Steps: <strong id="calc_steps_x">0</strong> (X) &times; <strong id="calc_steps_y">0</strong> (Y)<br>
-            Actual Scan Area End: X=<strong id="actual_end_x">0.00</strong>, Y=<strong id="actual_end_y">0.00</strong>
+            <span style="color:#8ab4f8;">&#9632;</span> Infer grid (<code>-infer</code>):
+            <strong id="calc_steps_x">0</strong> (X) &times; <strong id="calc_steps_y">0</strong> (Y)
+            = <strong id="calc_tiles_infer">0</strong> tiles,
+            ends X=<strong id="actual_end_x">0.00</strong>, Y=<strong id="actual_end_y">0.00</strong><br>
+            <span id="train_grid_line" style="display:none;">
+                <span style="color:#81c995;">&#9632;</span> Train grid (<code>-train</code>):
+                <strong id="calc_steps_x_train">0</strong> (X) &times; <strong id="calc_steps_y_train">0</strong> (Y)
+                = <strong id="calc_tiles_train">0</strong> tiles,
+                ends X=<strong id="actual_end_x_train">0.00</strong>, Y=<strong id="actual_end_y_train">0.00</strong><br>
+            </span>
+            <span style="color:#fff;">Total: <strong id="calc_tiles_total">0</strong> tiles,
+            estimated <strong id="calc_duration">0.0</strong> min</span>
         </div>
     </div>
 
@@ -452,8 +474,14 @@ HTML_TEMPLATE = r"""
         { id: 'start_y', label: 'Start Y', axis: 'y', desc: 'Y coordinate (mm) where the scan grid begins.' },
         { id: 'end_x', label: 'Desired End X', axis: 'x', desc: 'Desired X coordinate (mm) where the scan grid ends.' },
         { id: 'end_y', label: 'Desired End Y', axis: 'y', desc: 'Desired Y coordinate (mm) where the scan grid ends.' },
-        { id: 'step_size_x', label: 'Step Size X', desc: 'Distance (mm) between adjacent scan columns along X.' },
-        { id: 'step_size_y', label: 'Step Size Y', desc: 'Distance (mm) between adjacent scan rows along Y.' },
+        { id: 'step_size_x', label: 'Step Size X', desc: 'Distance (mm) between adjacent scan columns along X. This is the overlapping "-infer" grid.' },
+        { id: 'step_size_y', label: 'Step Size Y', desc: 'Distance (mm) between adjacent scan rows along Y. This is the overlapping "-infer" grid.' },
+        { id: 'dual_set', label: 'Dual Set Scan', desc: 'Also capture a second, non-overlapping grid into a "-train" folder, back-to-back in the same camera session.', isSelect: true, options: [
+            { value: 'off', label: 'Off (infer set only)' },
+            { value: 'on', label: 'On (infer + train)' }
+        ] },
+        { id: 'step_size_x_train', label: 'Train Step Size X', desc: 'Distance (mm) between columns of the non-overlapping "-train" grid. Set to the field of view (no overlap).' },
+        { id: 'step_size_y_train', label: 'Train Step Size Y', desc: 'Distance (mm) between rows of the non-overlapping "-train" grid. Set to the field of view (no overlap).' },
         { id: 'stack_start_z', label: 'Stack Start Z', axis: 'z', desc: 'Z height (mm) where each focus stack begins.' },
         { id: 'stack_end_z', label: 'Stack End Z', axis: 'z', desc: 'Z height (mm) where each focus stack ends.' },
         { id: 'stack_frames', label: 'Stack Frames', desc: 'Number of video frames captured during each Z sweep.' },
@@ -523,9 +551,11 @@ HTML_TEMPLATE = r"""
         });
 
         // start_x/end_x/step_size_x etc. also drive the scan-grid preview
-        ['start_x', 'start_y', 'end_x', 'end_y', 'step_size_x', 'step_size_y'].forEach(id => {
+        ['start_x', 'start_y', 'end_x', 'end_y', 'step_size_x', 'step_size_y',
+         'step_size_x_train', 'step_size_y_train', 'stack_frames', 'framerate'].forEach(id => {
             document.getElementById(id).addEventListener('input', updateScanGrid);
         });
+        document.getElementById('dual_set').addEventListener('change', updateScanGrid);
     }
 
     function markConfigDirty() {
@@ -539,13 +569,25 @@ HTML_TEMPLATE = r"""
         });
     }
 
+    // Keys added after the original presets were written. A preset that predates
+    // them must fall back to these rather than inheriting whatever the previously
+    // loaded config left in the form - otherwise loading an old single-grid preset
+    // could silently keep dual_set on and scan a second grid nobody asked for.
+    const CONFIG_FALLBACKS = {
+        dual_set: 'off',
+        step_size_x_train: 8,
+        step_size_y_train: 11
+    };
+
     function applyConfigValues(data) {
-        for (const [key, value] of Object.entries(data)) {
+        const merged = Object.assign({}, CONFIG_FALLBACKS, data);
+        for (const [key, value] of Object.entries(merged)) {
             const el = document.getElementById(key);
             if (el) el.value = value;
             const curEl = document.getElementById('cur_cfg_' + key);
             if (curEl) curEl.innerText = value;
         }
+        updateScanGrid();
     }
 
     // Load config on startup
@@ -719,6 +761,7 @@ HTML_TEMPLATE = r"""
         let config = {};
         const config_ids = [
             'start_x', 'start_y', 'end_x', 'end_y', 'step_size_x', 'step_size_y',
+            'dual_set', 'step_size_x_train', 'step_size_y_train',
             'stack_start_z', 'stack_end_z', 'stack_frames',
             'framerate', 'resolution', 'sample_name', 'output_folder',
             'exposure_us', 'analogue_gain', 'awb_red', 'awb_blue'
@@ -765,15 +808,18 @@ HTML_TEMPLATE = r"""
             return;
         }
 
+        const dualSet = document.getElementById('dual_set').value;
+
         fetch('/api/validate_path', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({output_folder: outputFolder, sample_name: sampleName})
+            body: JSON.stringify({output_folder: outputFolder, sample_name: sampleName, dual_set: dualSet})
         })
         .then(r => r.json())
         .then(validation => {
             if (validation.exists) {
-                alert("A folder with the name '" + sampleName + "' already exists in the output directory.\nPlease enter a different name.");
+                alert("These output folders already exist:\n\n  " + validation.collisions.join("\n  ") +
+                      "\n\nPlease enter a different sample name.");
                 return;
             }
 
@@ -865,18 +911,14 @@ HTML_TEMPLATE = r"""
         }, 2000);
     }
 
-    function updateScanGrid() {
-        const startX = parseFloat(document.getElementById('start_x').value);
-        const startY = parseFloat(document.getElementById('start_y').value);
-        const endX = parseFloat(document.getElementById('end_x').value);
-        const endY = parseFloat(document.getElementById('end_y').value);
-        const stepX = parseFloat(document.getElementById('step_size_x').value);
-        const stepY = parseFloat(document.getElementById('step_size_y').value);
+    // Per-tile cost of everything other than the Z sweep: combined travel move,
+    // settle, encoder open/close, HTTP round-trips. Mirrors PER_TILE_OVERHEAD_S
+    // in scanner.py - keep both in sync. Measured from a real run 2026-09-10.
+    const PER_TILE_OVERHEAD_S = 0.4;
 
-        if (isNaN(startX) || isNaN(startY) || isNaN(endX) || isNaN(endY) || isNaN(stepX) || isNaN(stepY)) {
-            return; // Don't calculate if inputs are not valid numbers yet
-        }
-
+    // Mirrors build_grid() in scanner.py. Note steps is a count of intervals
+    // used as a count of points, so the last tile lands one step short of end.
+    function gridFor(startX, startY, endX, endY, stepX, stepY) {
         const width = endX - startX;
         const height = endY - startY;
 
@@ -893,13 +935,62 @@ HTML_TEMPLATE = r"""
             stepsY = Math.max(1, Math.ceil(Math.abs(height) / absStepY));
         }
 
-        const actualEndX = startX + ((stepsX - 1) * absStepX * Math.sign(width));
-        const actualEndY = startY + ((stepsY - 1) * absStepY * Math.sign(height));
+        return {
+            stepsX: stepsX,
+            stepsY: stepsY,
+            tiles: stepsX * stepsY,
+            endX: startX + ((stepsX - 1) * absStepX * Math.sign(width)),
+            endY: startY + ((stepsY - 1) * absStepY * Math.sign(height))
+        };
+    }
 
-        document.getElementById('calc_steps_x').innerText = stepsX;
-        document.getElementById('calc_steps_y').innerText = stepsY;
-        document.getElementById('actual_end_x').innerText = actualEndX.toFixed(2);
-        document.getElementById('actual_end_y').innerText = actualEndY.toFixed(2);
+    function updateScanGrid() {
+        const startX = parseFloat(document.getElementById('start_x').value);
+        const startY = parseFloat(document.getElementById('start_y').value);
+        const endX = parseFloat(document.getElementById('end_x').value);
+        const endY = parseFloat(document.getElementById('end_y').value);
+        const stepX = parseFloat(document.getElementById('step_size_x').value);
+        const stepY = parseFloat(document.getElementById('step_size_y').value);
+
+        if (isNaN(startX) || isNaN(startY) || isNaN(endX) || isNaN(endY) || isNaN(stepX) || isNaN(stepY)) {
+            return; // Don't calculate if inputs are not valid numbers yet
+        }
+
+        const infer = gridFor(startX, startY, endX, endY, stepX, stepY);
+
+        document.getElementById('calc_steps_x').innerText = infer.stepsX;
+        document.getElementById('calc_steps_y').innerText = infer.stepsY;
+        document.getElementById('calc_tiles_infer').innerText = infer.tiles;
+        document.getElementById('actual_end_x').innerText = infer.endX.toFixed(2);
+        document.getElementById('actual_end_y').innerText = infer.endY.toFixed(2);
+
+        let totalTiles = infer.tiles;
+
+        const dualSet = document.getElementById('dual_set').value === 'on';
+        const trainLine = document.getElementById('train_grid_line');
+        const stepXTrain = parseFloat(document.getElementById('step_size_x_train').value);
+        const stepYTrain = parseFloat(document.getElementById('step_size_y_train').value);
+
+        if (dualSet && !isNaN(stepXTrain) && !isNaN(stepYTrain)) {
+            const train = gridFor(startX, startY, endX, endY, stepXTrain, stepYTrain);
+            document.getElementById('calc_steps_x_train').innerText = train.stepsX;
+            document.getElementById('calc_steps_y_train').innerText = train.stepsY;
+            document.getElementById('calc_tiles_train').innerText = train.tiles;
+            document.getElementById('actual_end_x_train').innerText = train.endX.toFixed(2);
+            document.getElementById('actual_end_y_train').innerText = train.endY.toFixed(2);
+            trainLine.style.display = '';
+            totalTiles += train.tiles;
+        } else {
+            trainLine.style.display = 'none';
+        }
+
+        const frames = parseFloat(document.getElementById('stack_frames').value);
+        const fps = parseFloat(document.getElementById('framerate').value);
+        const sweep = (!isNaN(frames) && !isNaN(fps) && fps > 0) ? frames / fps : 0;
+
+        document.getElementById('calc_tiles_total').innerText = totalTiles;
+        document.getElementById('calc_duration').innerText =
+            (totalTiles * (sweep + PER_TILE_OVERHEAD_S) / 60).toFixed(1);
     }
 
 </script>

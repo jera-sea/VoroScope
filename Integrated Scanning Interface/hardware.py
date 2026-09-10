@@ -19,26 +19,32 @@ class PrinterInterface:
             print(f"[PRINTER ERROR] Get Position: {e}")
             return None, None, None
 
-    def send_gcode(self, command):
-        """Sends a G-code command and waits for acknowledgement."""
+    def send_gcode(self, command, timeout=5):
+        """Sends a G-code command and waits for acknowledgement.
+
+        The request only returns once Klipper has drained the move queue (M400),
+        so 'timeout' must exceed the duration of the move being commanded. A
+        timeout here does NOT stop the machine - the move keeps running while
+        the caller carries on, which silently desynchronises a scan.
+        """
         try:
             url = f"{self.url}/printer/gcode/script"
-            response = requests.post(url, json={"script": command}, timeout=5)
+            response = requests.post(url, json={"script": command}, timeout=timeout)
             response.raise_for_status()
             return True
         except Exception as e:
             print(f"[PRINTER ERROR] Send GCode '{command}': {e}")
             return False
 
-    def move_to(self, x=None, y=None, z=None, speed=5000):
+    def move_to(self, x=None, y=None, z=None, speed=5000, timeout=5):
         """Smart move command. Only moves axes that are not None."""
         cmd = "G90\n" # Absolute positioning
         move_parts = []
         if x is not None: move_parts.append(f"X{x:.2f}")
         if y is not None: move_parts.append(f"Y{y:.2f}")
         if z is not None: move_parts.append(f"Z{z:.2f}")
-        
+
         if move_parts:
             cmd += f"G0 {' '.join(move_parts)} F{speed}\nM400"
-            return self.send_gcode(cmd)
+            return self.send_gcode(cmd, timeout=timeout)
         return True

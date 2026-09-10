@@ -1,0 +1,22 @@
+{
+    "start_x": "100",
+    "start_y": "50",
+    "end_x": "193",
+    "end_y": "140",
+    "step_size_x": "5.5",
+    "step_size_y": "8.6",
+    "dual_set": "on",
+    "step_size_x_train": "8",
+    "step_size_y_train": "11",
+    "stack_start_z": "43",
+    "stack_end_z": "37",
+    "stack_frames": "30",
+    "framerate": "10",
+    "resolution": "4056x3040",
+    "sample_name": "emergence_chambers_June_2026_Part_1",
+    "output_folder": "/home/pi/camera/ssd/scans",
+    "exposure_us": "50000",
+    "analogue_gain": "2.354",
+    "awb_red": "2.1316",
+    "awb_blue": "3.3847"
+}
