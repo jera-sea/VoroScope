@@ -1,0 +1,13 @@
+# Capture-script output captured by app.py (see launch_logged)
+logs/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Live working config, rewritten by the UI on every save/scan/test.
+# Named presets in configs/ are tracked; this scratch copy is not.
+scan_config.json
+
+# Written by calibrate.py from whatever the sensor saw at the time
+calibration.json

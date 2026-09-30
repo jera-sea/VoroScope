@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import threading
 import subprocess
@@ -21,9 +22,111 @@ CALIB_FILE = "calibration.json"
 scan_process = None
 zstack_test_process = None
 
+# Capture-script output. The scripts print their own diagnostics (computed sweep
+# duration, Z feedrate, [PRINTER ERROR] lines); the log file makes those visible
+# in the browser instead of only on the terminal that started app.py.
+#
+# Anchored to this file, NOT the process cwd: a systemd unit without
+# WorkingDirectory= starts the app in "/", where creating a relative "logs" is a
+# permission error.
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+
+# Open log file handles for running subprocesses, keyed by log name. Held so the
+# file stays open for the child, and closed once the child has exited.
+log_handles = {}
+
 # Global flag for camera streaming
 camera_lock = threading.Lock()
 streaming_active = False
+
+
+def launch_logged(name, args):
+    """Spawn a capture script with stdout+stderr captured to logs/<name>.log.
+
+    sys.executable, not "python3": the app runs from the venv at
+    /home/pi/camera/interface/ui_env, and the systemd unit sets VIRTUAL_ENV
+    without putting the venv's bin on PATH. A bare "python3" therefore resolves
+    to the system interpreter, which lacks the venv's packages - so the child
+    must inherit whatever interpreter is running this process.
+
+    '-u' is not optional: without it Python block-buffers when stdout is not a
+    tty, so the log would stay empty until the process exited - useless both for
+    following a 20-minute scan and for diagnosing a script that died early.
+
+    Log setup is wrapped in try/except on purpose: logging is a convenience and
+    must never be able to stop a scan from starting. If the file can't be
+    opened, the run still goes ahead with output going to our stdout only.
+    """
+    handle = None
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        close_log(name)  # release the previous run's handle before truncating
+        handle = open(os.path.join(LOG_DIR, f"{name}.log"), 'w')
+        log_handles[name] = handle
+    except Exception as e:
+        print(f"[app] WARNING: no log file for '{name}' ({e}); "
+              f"output goes to this stream only")
+
+    proc = subprocess.Popen([sys.executable, "-u"] + args,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # A pump thread rather than stdout=handle, so the output reaches BOTH the log
+    # file and our own stdout - which is the journal under systemd. Redirecting
+    # straight to the file silenced 'journalctl -u <unit> -f' entirely.
+    threading.Thread(target=_pump_output, args=(proc.stdout, name),
+                     daemon=True).start()
+    return proc
+
+
+def _pump_output(stream, name):
+    """Copy one child's output to its log file and to our stdout, line by line.
+
+    Something must keep reading the pipe or the child blocks once the OS buffer
+    fills, so this thread runs for the life of the process. It owns the log
+    handle's lifetime: EOF on the pipe means the child exited, so it closes.
+    """
+    try:
+        for raw in iter(stream.readline, b''):
+            line = raw.decode('utf-8', errors='replace')
+            handle = log_handles.get(name)
+            if handle:
+                try:
+                    handle.write(line)
+                    handle.flush()
+                except Exception:
+                    pass  # keep pumping; a dead log must not stall the child
+            try:
+                sys.stdout.write(f"[{name}] {line}")
+                sys.stdout.flush()
+            except Exception:
+                pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+        close_log(name)
+
+
+def close_log(name):
+    """Release the log handle for a finished subprocess. Safe to call twice."""
+    handle = log_handles.pop(name, None)
+    if handle:
+        try:
+            handle.close()
+        except Exception:
+            pass
+
+
+def read_log_tail(name, lines=100):
+    """Last N lines of a capture script's log, or '' if it has never run."""
+    path = os.path.join(LOG_DIR, f"{name}.log")
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, 'r', errors='replace') as f:
+            return "".join(f.readlines()[-lines:])
+    except Exception as e:
+        return f"[could not read {path}: {e}]"
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -217,7 +320,7 @@ def calibrate():
     if streaming_active:
         return jsonify({"status": "error", "message": "Turn off video stream first"}), 409
         
-    subprocess.Popen(["python3", "calibrate.py"])
+    launch_logged("calibrate", ["calibrate.py"])
     return jsonify({"status": "calibration_started"})
 
 @app.route('/api/calibration_status', methods=['GET'])
@@ -263,13 +366,18 @@ def start_scan():
     with open(CONFIG_FILE, 'w') as f:
         json.dump(request.json, f, indent=4)
 
-    scan_process = subprocess.Popen(["python3", "scanner.py", CONFIG_FILE])
+    scan_process = launch_logged("scan", ["scanner.py", CONFIG_FILE])
     return jsonify({"status": "started"})
 
 @app.route('/api/scan/status', methods=['GET'])
 def scan_status():
+    # The pump thread closes the log on EOF, so nothing to clean up here.
     running = (scan_process is not None and scan_process.poll() is None)
     return jsonify({"running": running})
+
+@app.route('/api/scan/log', methods=['GET'])
+def scan_log():
+    return jsonify({"log": read_log_tail("scan")})
 
 @app.route('/api/scan/stop', methods=['POST'])
 def stop_scan():
@@ -293,13 +401,17 @@ def zstack_test():
     if zstack_test_process and zstack_test_process.poll() is None:
         return jsonify({"status": "error", "message": "Z-stack test already running"}), 409
 
-    zstack_test_process = subprocess.Popen(["python3", "single_zstack.py", CONFIG_FILE])
+    zstack_test_process = launch_logged("zstack_test", ["single_zstack.py", CONFIG_FILE])
     return jsonify({"status": "started"})
 
 @app.route('/api/scan/zstack_test/status', methods=['GET'])
 def zstack_test_status():
     running = (zstack_test_process is not None and zstack_test_process.poll() is None)
     return jsonify({"running": running})
+
+@app.route('/api/scan/zstack_test/log', methods=['GET'])
+def zstack_test_log():
+    return jsonify({"log": read_log_tail("zstack_test")})
 
 @app.route('/api/stream/force_release', methods=['POST'])
 def force_release():
@@ -340,6 +452,11 @@ HTML_TEMPLATE = r"""
         .pos-display { font-family: monospace; font-size: 1.2em; color: #0f0; margin-bottom: 10px; text-align: center; }
         #progressBarContainer { width: 100%; background: #444; height: 20px; border-radius: 10px; margin-top: 20px; display:none;}
         #progressBar { width: 0%; height: 100%; background: #28a745; border-radius: 10px; transition: width 0.5s; }
+        #runLogBox { display: none; margin-top: 12px; }
+        #runLog { max-height: 220px; overflow: auto; background: #1a1a1a; border: 1px solid #555;
+                  border-radius: 4px; padding: 8px; margin: 0; font-family: monospace; font-size: 11px;
+                  line-height: 1.4; white-space: pre-wrap; word-break: break-word; color: #ccc; }
+        #runLog .warn { color: #ffc107; }
         .config-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
         .config-table th { text-align: left; color: #ccc; font-size: 0.85em; padding: 6px 8px; border-bottom: 1px solid #555; }
         .config-table td { padding: 6px 8px; border-bottom: 1px solid #444; vertical-align: middle; }
@@ -464,6 +581,11 @@ HTML_TEMPLATE = r"""
             <div id="progressBar"></div>
         </div>
         <div id="scanStatus" style="text-align: center; margin-top: 10px; color: #ffc107;"></div>
+
+        <div id="runLogBox">
+            <h3>Script Output</h3>
+            <pre id="runLog"></pre>
+        </div>
     </div>
 </div>
 
@@ -832,12 +954,21 @@ HTML_TEMPLATE = r"""
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(config)
-            }).then(r => r.json()).then(data => {
+            }).then(jsonOrThrow).then(data => {
                 if(data.status === 'error') alert(data.message);
                 else {
                     monitorScan();
                 }
-            });
+            }).catch(err => alert("Could not start the scan.\n\n" + err.message));
+        });
+    }
+
+    // A Flask 500 returns an HTML traceback, not JSON. Without this, r.json()
+    // rejects, nothing catches it, and the button appears to do nothing at all.
+    function jsonOrThrow(r) {
+        if (r.ok) return r.json();
+        return r.text().then(t => {
+            throw new Error("Server returned " + r.status + ".\n\n" + t.slice(0, 600));
         });
     }
     
@@ -845,12 +976,30 @@ HTML_TEMPLATE = r"""
         fetch('/api/scan/stop', {method: 'POST'});
     }
 
+    // Log endpoint the Script Output pane is currently following, or null.
+    let activeLogUrl = null;
+
+    function refreshLog() {
+        if (!activeLogUrl) return;
+        fetch(activeLogUrl).then(r => r.json()).then(d => {
+            const pre = document.getElementById('runLog');
+            document.getElementById('runLogBox').style.display = 'block';
+            // Don't yank the view back down if the user has scrolled up to read.
+            const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+            pre.textContent = d.log || '(no output yet)';
+            if (atBottom) pre.scrollTop = pre.scrollHeight;
+        }).catch(() => {});
+    }
+
     function monitorScan() {
         document.getElementById('progressBarContainer').style.display = 'block';
         document.getElementById('scanStatus').innerText = "SCANNING...";
-        
+        activeLogUrl = '/api/scan/log';
+        refreshLog();
+
         let check = setInterval(() => {
             fetch('/api/scan/status').then(r=>r.json()).then(d => {
+                refreshLog();
                 if(!d.running) {
                     clearInterval(check);
                     document.getElementById('scanStatus').innerText = "COMPLETE / IDLE";
@@ -882,30 +1031,46 @@ HTML_TEMPLATE = r"""
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(config)
         })
-        .then(r => r.json())
+        .then(jsonOrThrow)
         .then(() => fetch('/api/scan/zstack_test', {method: 'POST'}))
-        .then(r => r.json())
+        .then(jsonOrThrow)
         .then(data => {
             if (data.status === 'error') {
                 alert(data.message);
             } else {
                 monitorZStackTest();
             }
-        });
+        })
+        .catch(err => alert("Could not start the Z-stack test.\n\n" + err.message));
     }
 
     function monitorZStackTest() {
         const btn = document.getElementById('zstackTestBtn');
         btn.disabled = true;
         btn.innerText = "Running Z-Stack Test...";
+        activeLogUrl = '/api/scan/zstack_test/log';
+        refreshLog();
 
         let check = setInterval(() => {
             fetch('/api/scan/zstack_test/status').then(r=>r.json()).then(d => {
+                refreshLog();
                 if (!d.running) {
                     clearInterval(check);
                     btn.disabled = false;
                     btn.innerText = "Test Z Motion (Focus Stack)";
-                    alert("Z-stack test complete.");
+                    // Re-read the log before reporting the outcome: the script's
+                    // own warning is the only signal that a capture was
+                    // truncated, and a bare "complete" would hide it.
+                    fetch('/api/scan/zstack_test/log').then(r=>r.json()).then(l => {
+                        const log = l.log || '';
+                        document.getElementById('runLogBox').style.display = 'block';
+                        document.getElementById('runLog').textContent = log || '(no output)';
+                        if (log.indexOf('WARNING') !== -1 || log.indexOf('[PRINTER ERROR]') !== -1) {
+                            alert("Z-stack test finished WITH ERRORS - see Script Output under the scan buttons. The capture is probably incomplete.");
+                        } else {
+                            alert("Z-stack test complete.");
+                        }
+                    });
                 }
             });
         }, 2000);

@@ -12,6 +12,11 @@ from hardware import PrinterInterface
 # ==========================================
 CONFIG_FILE = "/home/pi/camera/interface/configs/first_batch_Jan_2026.json"
 
+# HTTP timeout for the Z repositioning moves (approach and final lift). Every
+# move blocks until M400 returns, and a descent from a parked high Z at
+# max_z_velocity (15 mm/s) can take ~20s - well past hardware.py's 5s default.
+MOVE_TIMEOUT = 30
+
 # ==========================================
 
 def run_single_zstack(config_file):
@@ -65,6 +70,9 @@ def run_single_zstack(config_file):
     z_dist = abs(cfg['stack_end_z'] - cfg['stack_start_z'])
     duration = cfg['stack_frames'] / cfg['framerate']
     z_speed = (z_dist / duration) * 60 if duration > 0 else 1000
+    # The sweep move blocks until M400 returns, so the HTTP timeout has to
+    # outlast the sweep or recording stops while the head is still moving.
+    sweep_timeout = duration + 10
 
     print(f"Z stack: {cfg['stack_start_z']}mm -> {cfg['stack_end_z']}mm")
     print(f"Z distance: {z_dist:.2f}mm over {duration:.2f}s at {z_speed:.1f}mm/min")
@@ -73,8 +81,8 @@ def run_single_zstack(config_file):
     try:
         # Move to safe Z first
         print("Moving to start Z...")
-        printer.move_to(z=cfg['stack_start_z'] + 2, speed=1000)
-        printer.move_to(z=cfg['stack_start_z'], speed=1000)
+        printer.move_to(z=cfg['stack_start_z'] + 2, speed=1000, timeout=MOVE_TIMEOUT)
+        printer.move_to(z=cfg['stack_start_z'], speed=1000, timeout=MOVE_TIMEOUT)
         time.sleep(0.2)
 
         # Record
@@ -83,17 +91,30 @@ def run_single_zstack(config_file):
         cam.start_recording(encoder, output_file)
 
         # Z sweep
-        printer.move_to(z=cfg['stack_end_z'], speed=z_speed)
+        swept = printer.move_to(z=cfg['stack_end_z'], speed=z_speed,
+                                timeout=sweep_timeout)
 
         # Stop recording
         cam.stop_recording()
-        print("Recording complete.")
+
+        if swept:
+            print("Recording complete.")
+        else:
+            # move_to swallows the error and returns False, so without this the
+            # run would report success over a stack covering only part of the
+            # Z range - the exact failure this check exists to make obvious.
+            print("")
+            print("*** WARNING: the Z sweep was not acknowledged. ***")
+            print(f"*** {output_file} is almost certainly INCOMPLETE and covers")
+            print("*** only part of the Z range. The head may still be moving.")
+            print("*** Discard this capture; see the [PRINTER ERROR] line above.")
+            print("")
 
     finally:
         cam.stop()
         cam.close()
         # Lift head clear
-        printer.move_to(z=cfg['stack_start_z'] + 5, speed=1000)
+        printer.move_to(z=cfg['stack_start_z'] + 5, speed=1000, timeout=MOVE_TIMEOUT)
         print(f"Done. File saved to: {output_file}")
 
 if __name__ == "__main__":

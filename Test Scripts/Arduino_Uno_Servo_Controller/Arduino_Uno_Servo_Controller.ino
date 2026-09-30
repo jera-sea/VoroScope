@@ -40,7 +40,7 @@ void loop() {
       int targetPos = Serial.parseInt();
       
       // Basic validation
-      if (targetPos >= 0 && targetPos <= 180) {
+      if (targetPos >= 0 && targetPos <= 360) {
         
         Serial.print("Moving to ");
         Serial.print(targetPos);
