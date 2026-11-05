@@ -1,0 +1,289 @@
+==============================================================================
+ VOROSCOPE SCAN PROCESSING - SETUP ON A WINDOWS 8.1 PC
+ Script: batch_stack_scans.py        Written: 2026-10-14
+==============================================================================
+
+WHAT THE SCRIPT DOES
+--------------------
+Point it at a folder of scans (one subfolder per scan, each holding the
+tile_r_c.h264 videos and manifest.csv). For each scan, one at a time, it:
+extracts the video frames, focus-stacks every tile with Helicon Focus,
+copies the manifest, then deletes that scan's extracted frames.
+Result, inside the folder you chose:
+
+    stacked_scans\<scan name>\tile_0_0.jpg, tile_0_1.jpg, ...
+    stacked_scans\<scan name>\manifest.csv
+    stacked_scans\batch_log.txt          (log of the run)
+
+The original scan folders are not changed. It can be stopped and
+restarted at any time: tiles already stacked are skipped.
+
+WHAT THE SCRIPT NEEDS
+---------------------
+  - Python 3.8 or newer, 64-bit (3.10 recommended below)
+  - Python packages: piexif (+ Pillow, installed below, harmless)
+    (tkinter comes with Python)
+  - ffmpeg      - needed to extract frames from the .h264 videos
+  - Helicon Focus, at the path set by HELICON_PATH (line 72 of the script)
+
+WHY A CONDA ENV INSTEAD OF A VENV
+---------------------------------
+A venv would work, but since Anaconda is already on this PC a conda
+environment is the safer choice:
+  - A venv built from Anaconda's Python often has broken pip (SSL errors)
+    and broken tkinter, because the DLLs it needs sit in Anaconda's
+    Library\bin folder, which a venv doesn't see.
+  - conda can also install ffmpeg into the env, and the script looks for
+    ffmpeg there automatically (<env>\Library\bin).
+  - It is just as isolated as a venv: base Anaconda is left untouched.
+If conda won't cooperate (very old Anaconda), use PART F (venv with a
+fresh python.org install) instead of Parts B and E.
+
+The steps below assume the PC has internet. If it doesn't, see PART G.
+
+
+PART A - CHECK THE MACHINE
+--------------------------
+1. Confirm 64-bit Windows:
+   Control Panel > System and Security > System > "System type"
+   must say "64-bit Operating System". (Helicon Focus 8 needs 64-bit.)
+
+2. Open "Anaconda Prompt": press the Windows key, type  anaconda  and
+   click Anaconda Prompt.
+
+3. In the Anaconda Prompt, type:
+
+       conda --version
+       conda info --base
+
+   Write down the folder printed by the second command (the "base"
+   folder), e.g.  C:\Users\NAME\Anaconda3  or  C:\ProgramData\Anaconda3.
+   You need it in PART E.
+   (If "conda info --base" gives an error, type  where conda  instead;
+   the base folder is the part before \Scripts\conda.exe.)
+
+
+PART B - CREATE THE ENVIRONMENT
+-------------------------------
+1. In the Anaconda Prompt, type (one line):
+
+       conda create -n voroscope -c conda-forge --override-channels python=3.10 pillow piexif ffmpeg
+
+   Type  y  when it asks to proceed. This can take several minutes.
+
+   Python 3.10 is chosen because it still runs on Windows 8.1; the
+   newest Python releases may not.
+
+   If it fails or hangs on "Solving environment" for a long time, press
+   Ctrl+C and retry with  python=3.8  instead of  python=3.10.
+   If it still fails, go to PART F.
+
+2. Activate it:
+
+       conda activate voroscope
+
+   (On a very old Anaconda, "conda activate" may not exist. Use
+       activate voroscope
+    instead, here and everywhere below.)
+
+   The prompt should now start with  (voroscope)
+
+3. Test it:
+
+       python --version
+       python -c "import PIL, piexif, tkinter; print('packages OK')"
+       ffmpeg -version
+
+   Expect: Python 3.10.x, "packages OK", and a block of ffmpeg version
+   text. If any of these fail, see TROUBLESHOOTING.
+
+
+PART C - INSTALL HELICON FOCUS
+------------------------------
+1. Download the installer from heliconsoft.com (log in to your account
+   for the licensed version). Check the listed system requirements: if
+   the current version won't install on Windows 8.1, ask Helicon
+   support or look in your account for an older 8.x installer.
+
+2. Run the installer and enter / activate the licence.
+   NOTE: the script drives Helicon from the command line ("-silent",
+   "-save:"). Check that your licence edition supports command-line
+   use; if it doesn't, the stacking step will fail.
+
+3. Start Helicon Focus once by hand and close any first-run, licence or
+   update pop-ups. If a pop-up is waiting when the script runs Helicon
+   silently, the script can hang.
+
+4. Find HeliconFocus.exe. The script expects:
+
+       C:\Program Files\Helicon Software\Helicon Focus 8\HeliconFocus.exe
+
+   If yours is somewhere else (different version number, or
+   "Program Files (x86)"), open batch_stack_scans.py in Notepad, find
+   line 72 (CONFIGURATION section near the top), and change only the
+   text between the quotes:
+
+       HELICON_PATH = r"C:\your\path\to\HeliconFocus.exe"
+
+   Keep the r in front of the first quote. Save.
+
+5. Optional quick test in a normal Command Prompt (one line, adjust
+   paths; the test folder should contain a few images of one stack):
+
+       "C:\Program Files\Helicon Software\Helicon Focus 8\HeliconFocus.exe" -silent -m:B -r:50 -s:4 "C:\test\stack1" -save:"C:\test\out.jpg"
+
+   C:\test\out.jpg should appear after a short while.
+
+
+PART D - COPY THE SCRIPT AND THE SCANS
+--------------------------------------
+1. Create a folder, e.g.  C:\VoroScope
+2. Copy batch_stack_scans.py from the flash drive into it.
+   (Also copy this file if you like.)
+3. Copy the month's scan folder to a LOCAL disk on this PC, e.g.
+       D:\Scans\August 2026\    containing the scan folders
+       HT3P1_sideA_August_2026-infer\, HT3P1_sideA_August_2026-train\ ...
+   Free space needed on that disk, besides the scans themselves:
+   ~15 GB (about 10 GB of stacked images for a month, plus up to ~3 GB
+   of temporary frames for the scan being worked on). The script stops
+   cleanly before a scan if less than 5 GB is free.
+
+
+PART E - RUN THE SCRIPT
+-----------------------
+1. Open the Anaconda Prompt.
+2. Type (the last line is one line; put the folder in quotes):
+
+       conda activate voroscope
+       cd /d C:\VoroScope
+       python batch_stack_scans.py "D:\Scans\August 2026"
+
+   (Leave out the folder and a folder picker opens instead - check the
+    taskbar if it is hidden behind the prompt.)
+3. Watch the prompt. For each scan it shows
+       === Scan 5/163: <scan name> (168 of 168 tiles to stack) ===
+   then extraction, timestamping, stacking [1/168] ..., and a summary
+   line. After each scan it prints the overall progress.
+4. When it ends, a message box says whether everything worked. Results
+   are in  D:\Scans\August 2026\stacked_scans\
+
+LONG RUNS - GOOD TO KNOW
+  - A full month (~27,000 tiles) takes in the order of 40+ hours;
+    roughly 5 s per tile for stacking, plus extraction.
+  - The script keeps the PC awake while it runs. Also turn off
+    Windows Update auto-restart if you can.
+  - Safe to stop (Ctrl+C or close the window) and rerun with the same
+    folder: finished tiles are skipped, it continues where it stopped.
+  - Progress and errors are logged with times in
+    stacked_scans\batch_log.txt
+  - If Helicon fails on a tile (error or >10 min), that tile is logged,
+    its frames are kept in Extracted_Frames\<scan>\ for inspection, and
+    the run carries on. Rerunning retries only the failed tiles.
+  - The script uses every CPU core, so the PC will be sluggish.
+
+OPTIONAL - DOUBLE-CLICK / DRAG-AND-DROP LAUNCHER
+  a. Open Notepad and paste these 4 lines, replacing the first path with
+     YOUR base folder from PART A step 3:
+
+       @echo off
+       call "C:\Users\NAME\Anaconda3\Scripts\activate.bat" voroscope
+       python "%~dp0batch_stack_scans.py" %*
+       pause
+
+  b. File > Save As, set "Save as type" to "All Files", and save it as
+     run_voroscope.bat  in the same folder as batch_stack_scans.py.
+  c. Either drag the month's scan folder onto run_voroscope.bat, or
+     double-click it and pick the folder. The window stays open at the
+     end so you can read any errors.
+
+
+PART F - FALLBACK: VENV WITH A FRESH PYTHON  (only if PART B failed)
+--------------------------------------------------------------------
+1. From python.org > Downloads > Windows, get
+       Python 3.10.11 - "Windows installer (64-bit)"
+   (3.10.11 is the last 3.10 release with an installer.)
+2. Run it. Tick "Install launcher for all users (py)". Do NOT tick
+   "Add Python to PATH" (avoids clashing with Anaconda). Install.
+3. In a normal Command Prompt (not the Anaconda Prompt):
+
+       py -3.10 -m venv C:\VoroScope\venv
+       C:\VoroScope\venv\Scripts\activate.bat
+       python -m pip install --upgrade pip
+       pip install pillow piexif
+       python -c "import PIL, piexif, tkinter; print('packages OK')"
+
+4. ffmpeg: download a Windows 64-bit
+   "essentials" build (e.g. from gyan.dev), unzip it to C:\ffmpeg so
+   that C:\ffmpeg\bin\ffmpeg.exe exists. Run  C:\ffmpeg\bin\ffmpeg -version
+   to check it starts. If it errors on Windows 8.1, try an older build.
+5. To run the script each time:
+
+       C:\VoroScope\venv\Scripts\activate.bat
+       set PATH=C:\ffmpeg\bin;%PATH%
+       cd /d C:\VoroScope
+       python batch_stack_scans.py "D:\Scans\August 2026"
+
+   Launcher .bat for this route (save next to the script; drag the
+   scan folder onto it, or double-click and pick the folder):
+
+       @echo off
+       set PATH=C:\ffmpeg\bin;%PATH%
+       call "%~dp0venv\Scripts\activate.bat"
+       python "%~dp0batch_stack_scans.py" %*
+       pause
+
+
+PART G - IF THE PC HAS NO INTERNET
+----------------------------------
+Use the PART F route and prepare everything on an internet PC:
+1. Download to the flash drive: the Python 3.10.11 64-bit installer,
+   the ffmpeg zip, the Helicon Focus installer.
+2. On the internet PC (any Python with pip), run (one line):
+
+       pip download pillow piexif --only-binary=:all: --platform win_amd64 --python-version 3.10 -d E:\wheels
+
+   (E: = flash drive). This saves the package files to E:\wheels.
+3. On the Windows 8.1 PC, follow PART F, but replace the two pip lines
+   with:
+
+       pip install --no-index --find-links E:\wheels pillow piexif
+
+   Helicon licence activation may still need internet; check Helicon's
+   offline activation instructions if so.
+
+
+TROUBLESHOOTING
+---------------
+SyntaxError pointing at  f"...
+    You are running an old Python. The env isn't active: run
+    "conda activate voroscope" (or the venv activate.bat) first.
+
+ModuleNotFoundError: No module named 'piexif' / 'PIL'
+    Same cause: environment not activated.
+
+Python installer says it needs "KB2999226" / "Universal C Runtime"
+    Run Windows Update (or install KB2999226 from Microsoft), reboot,
+    and try again.
+
+"Helicon Focus executable not found at: ..."
+    Fix HELICON_PATH on line 72 (PART C step 4).
+
+"FFmpeg not found"
+    In the activated prompt, "ffmpeg -version" must work (conda route),
+    or C:\ffmpeg\bin must be on PATH (venv route).
+
+Every tile fails with "timed out after 600s"
+    Helicon is probably showing a hidden pop-up. Close the script
+    (Ctrl+C), open Helicon by hand, clear the pop-up, close it, rerun.
+
+Every tile fails with "exited with code" / "wrote no output image"
+    Run the PART C step 5 test by hand on one of the frame folders kept
+    in Extracted_Frames to see Helicon's own error (often a licence /
+    command-line issue).
+
+"Stopped: Only X GB free on the drive"
+    Free up space on the disk holding the scans, then rerun with the
+    same folder; it continues where it stopped.
+
+Folder picker never appears
+    Look on the taskbar or Alt+Tab; it can open behind other windows.
